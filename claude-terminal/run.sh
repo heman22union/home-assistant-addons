@@ -419,11 +419,11 @@ setup_ssh() {
     local auth_keys_file="${ssh_user_dir}/authorized_keys"
     : > "$auth_keys_file"
 
-    if bashio::config.has_value 'ssh_authorized_keys'; then
-        bashio::config 'ssh_authorized_keys' | jq -r '.[]' >> "$auth_keys_file" 2>/dev/null \
-            && bashio::log.info "SSH authorized keys written ($(wc -l < "$auth_keys_file") key(s))" \
-            || bashio::log.warning "Failed to parse ssh_authorized_keys — add keys manually to ${auth_keys_file}"
-    fi
+    local keys_json
+    keys_json=$(bashio::config 'ssh_authorized_keys' 2>/dev/null || echo "[]")
+    bashio::log.info "SSH authorized keys config value: ${keys_json}"
+    echo "$keys_json" | jq -r '.[] // empty' >> "$auth_keys_file" 2>/dev/null || true
+    bashio::log.info "Authorized keys written: $(wc -l < "$auth_keys_file" | tr -d ' ') key(s)"
     chmod 600 "$auth_keys_file"
 
     # Write minimal sshd config
