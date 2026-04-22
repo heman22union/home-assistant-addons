@@ -419,10 +419,16 @@ setup_ssh() {
     local auth_keys_file="${ssh_user_dir}/authorized_keys"
     : > "$auth_keys_file"
 
-    local keys_json
-    keys_json=$(bashio::config 'ssh_authorized_keys' 2>/dev/null || echo "[]")
-    bashio::log.info "SSH authorized keys config value: ${keys_json}"
-    echo "$keys_json" | jq -r '.[] // empty' >> "$auth_keys_file" 2>/dev/null || true
+    local keys_raw
+    keys_raw=$(bashio::config 'ssh_authorized_keys' 2>/dev/null || echo "")
+    if [ -n "$keys_raw" ]; then
+        # bashio returns JSON array for multi-value or raw string for single value
+        if echo "$keys_raw" | jq -e 'type == "array"' > /dev/null 2>&1; then
+            echo "$keys_raw" | jq -r '.[]' >> "$auth_keys_file"
+        else
+            echo "$keys_raw" >> "$auth_keys_file"
+        fi
+    fi
     bashio::log.info "Authorized keys written: $(wc -l < "$auth_keys_file" | tr -d ' ') key(s)"
     chmod 600 "$auth_keys_file"
 
