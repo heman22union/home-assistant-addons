@@ -399,8 +399,8 @@ setup_ssh() {
         apk add --no-cache openssh || { bashio::log.error "Failed to install openssh"; return 1; }
     fi
 
-    # Persist host keys in data dir so they survive container restarts
-    local host_key_dir="/data/ssh"
+    # Persist host keys so they survive container restarts
+    local host_key_dir="${ANTHROPIC_HOME}/ssh"
     mkdir -p "$host_key_dir"
     chmod 700 "$host_key_dir"
 
@@ -413,7 +413,7 @@ setup_ssh() {
     done
 
     # Write authorized keys from config
-    local ssh_user_dir="/data/home/.ssh"
+    local ssh_user_dir="${HOME}/.ssh"
     mkdir -p "$ssh_user_dir"
     chmod 700 "$ssh_user_dir"
     local auth_keys_file="${ssh_user_dir}/authorized_keys"
