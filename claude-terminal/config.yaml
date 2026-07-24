@@ -1,8 +1,8 @@
 ---
-name: "Claude Terminal (Upstream)"
+name: "Claude Terminal"
 description: "Web terminal with Anthropic's Claude Code CLI and persistent auth"
 version: "2.5.1"
-slug: "claude_terminal_upstream"
+slug: "claude_terminal"
 init: false
 
 # Prebuilt images on GHCR — the Supervisor pulls these instead of building
@@ -28,8 +28,10 @@ panel_admin: true
 # Port configuration
 ports:
   7681/tcp: null
+  2222/tcp: null
 ports_description:
   7681/tcp: "Web terminal (not required for ingress)"
+  2222/tcp: "SSH server (optional, enable in config)"
 
 # Add-on configuration options
 options:
@@ -40,6 +42,13 @@ options:
   ha_smart_context: true
   enable_ha_mcp: true
   ha_mcp_version: "7.11.0"
+  enable_session_picker: false
+  working_directory: "/config"
+  prompt_working_directory: false
+  claude_data_path: ""
+  enable_ssh: false
+  ssh_port: 2222
+  ssh_authorized_keys: []
   persistent_apk_packages: []
   persistent_pip_packages: []
 schema:
@@ -50,6 +59,14 @@ schema:
   ha_smart_context: bool?
   enable_ha_mcp: bool?
   ha_mcp_version: str?
+  enable_session_picker: bool?
+  working_directory: str?
+  prompt_working_directory: bool?
+  claude_data_path: str?
+  enable_ssh: bool?
+  ssh_port: int?
+  ssh_authorized_keys:
+    - str
   persistent_apk_packages:
     - str
   persistent_pip_packages:

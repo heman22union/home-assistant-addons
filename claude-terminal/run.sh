@@ -12,18 +12,26 @@ set -o pipefail
 
 # Initialize environment for Claude Code CLI using /data (HA best practice)
 init_environment() {
-    # Use /data exclusively - guaranteed writable by HA Supervisor
-    local data_home="/data/home"
-    local config_dir="/data/.config"
-    local cache_dir="/data/.cache"
-    local state_dir="/data/.local/state"
-    local claude_config_dir="/data/.config/claude"
+    # Allow user to override the data base directory (e.g. /config/.claude) so
+    # that Claude sessions/config are accessible via the HA /config volume.
+    # Defaults to /data (HA Supervisor guaranteed-writable volume).
+    local data_base
+    data_base=$(bashio::config 'claude_data_path' '')
+    if [ -z "$data_base" ] || [ "$data_base" = "null" ]; then
+        data_base="/data"
+    fi
 
-    bashio::log.info "Initializing Claude Code environment in /data..."
+    local data_home="${data_base}/home"
+    local config_dir="${data_base}/.config"
+    local cache_dir="${data_base}/.cache"
+    local state_dir="${data_base}/.local/state"
+    local claude_config_dir="${data_base}/.config/claude"
+
+    bashio::log.info "Initializing Claude Code environment in ${data_base}..."
 
     # Create all required directories
-    if ! mkdir -p "$data_home" "$config_dir/claude" "$cache_dir" "$state_dir" "/data/.local"; then
-        bashio::log.error "Failed to create directories in /data"
+    if ! mkdir -p "$data_home" "$config_dir/claude" "$cache_dir" "$state_dir" "${data_base}/.local"; then
+        bashio::log.error "Failed to create directories in ${data_base}"
         exit 1
     fi
 
@@ -35,11 +43,11 @@ init_environment() {
     export XDG_CONFIG_HOME="$config_dir"
     export XDG_CACHE_HOME="$cache_dir"
     export XDG_STATE_HOME="$state_dir"
-    export XDG_DATA_HOME="/data/.local/share"
+    export XDG_DATA_HOME="${data_base}/.local/share"
 
     # Claude-specific environment variables
     export ANTHROPIC_CONFIG_DIR="$claude_config_dir"
-    export ANTHROPIC_HOME="/data"
+    export ANTHROPIC_HOME="$data_base"
 
     # The persistent native Claude install (see update_claude) must win over
     # the copy bundled in the image
@@ -110,7 +118,9 @@ setup_commands() {
         "persist-install:/opt/scripts/persist-install.sh" \
         "ha-context:/opt/scripts/ha-context.sh" \
         "claude-doctor:/opt/scripts/health-check.sh" \
-        "claude-login-url:/opt/scripts/claude-login-url.sh"; do
+        "claude-login-url:/opt/scripts/claude-login-url.sh" \
+        "claude-session-picker:/opt/scripts/claude-session-picker.sh" \
+        "pick-working-dir:/opt/scripts/pick-working-dir.sh"; do
         name="${entry%%:*}"
         script="${entry#*:}"
         if [ -f "$script" ]; then
@@ -307,14 +317,36 @@ build_claude_flags() {
 get_claude_launch_command() {
     local flags="$1"
 
+    # Build working directory prefix
+    local working_dir
+    working_dir=$(bashio::config 'working_directory' '/config')
+    if [ -z "$working_dir" ] || [ "$working_dir" = "null" ]; then
+        working_dir="/config"
+    fi
+
+    local cd_prefix
+    if [ "$(bashio::config 'prompt_working_directory' 'false')" = "true" ] \
+        && [ -f /usr/local/bin/pick-working-dir ]; then
+        cd_prefix=". /usr/local/bin/pick-working-dir '${working_dir}'; "
+    else
+        cd_prefix="cd '${working_dir}' 2>/dev/null || cd /config; "
+    fi
+
+    # Session picker takes priority when enabled
+    if [ "$(bashio::config 'enable_session_picker' 'false')" = "true" ] \
+        && [ -f /usr/local/bin/claude-session-picker ]; then
+        echo "${cd_prefix}/usr/local/bin/claude-session-picker"
+        return
+    fi
+
     if [ "$(bashio::config 'auto_launch_claude' 'true')" = "true" ]; then
         # tmux -A attaches to the live session on browser reconnects and HA
         # navigation instead of stacking new ones
-        echo "tmux new-session -A -s claude 'claude${flags:+ $flags}'"
+        echo "${cd_prefix}tmux new-session -A -s claude 'claude${flags:+ $flags}'"
     else
         # Shell mode: banner + interactive bash, still inside tmux for
         # reconnect persistence. Run 'claude' manually when ready.
-        echo "tmux new-session -A -s claude '/usr/local/bin/welcome --shell'"
+        echo "${cd_prefix}tmux new-session -A -s claude '/usr/local/bin/welcome --shell'"
     fi
 }
 
@@ -356,6 +388,87 @@ start_web_terminal() {
         bash -c "$launch_command"
 }
 
+# Optionally start an SSH server for remote access (VS Code, terminal, etc.)
+setup_ssh() {
+    local enable_ssh
+    enable_ssh=$(bashio::config 'enable_ssh' 'false')
+
+    if [ "$enable_ssh" != "true" ]; then
+        bashio::log.info "SSH server disabled"
+        return 0
+    fi
+
+    local ssh_port
+    ssh_port=$(bashio::config 'ssh_port' '2222')
+
+    bashio::log.info "Setting up SSH server on port ${ssh_port}..."
+
+    if ! command -v sshd &>/dev/null; then
+        apk add --no-cache openssh || { bashio::log.error "Failed to install openssh"; return 1; }
+    fi
+
+    # Persist host keys so they survive container restarts
+    local host_key_dir="${ANTHROPIC_HOME}/ssh"
+    mkdir -p "$host_key_dir"
+    chmod 700 "$host_key_dir"
+
+    for key_type in rsa ed25519; do
+        local key_file="${host_key_dir}/ssh_host_${key_type}_key"
+        if [ ! -f "$key_file" ]; then
+            ssh-keygen -t "$key_type" -f "$key_file" -N "" -q
+            bashio::log.info "Generated SSH host key: ${key_file}"
+        fi
+        chmod 600 "$key_file"
+        chmod 644 "${key_file}.pub"
+    done
+
+    # Write authorized keys from config
+    local ssh_user_dir="${HOME}/.ssh"
+    mkdir -p "$ssh_user_dir"
+    chmod 700 "$ssh_user_dir"
+    local auth_keys_file="${ssh_user_dir}/authorized_keys"
+    : > "$auth_keys_file"
+
+    local keys_raw
+    keys_raw=$(bashio::config 'ssh_authorized_keys' 2>/dev/null || echo "")
+    if [ -n "$keys_raw" ]; then
+        if echo "$keys_raw" | jq -e 'type == "array"' > /dev/null 2>&1; then
+            echo "$keys_raw" | jq -r '.[]' >> "$auth_keys_file"
+        else
+            echo "$keys_raw" >> "$auth_keys_file"
+        fi
+    fi
+    chmod 600 "$auth_keys_file"
+
+    local key_count
+    key_count=$(wc -l < "$auth_keys_file" | tr -d ' ')
+    if [ "$key_count" -eq 0 ]; then
+        bashio::log.warning "SSH enabled but no authorized keys configured — no one will be able to log in"
+        bashio::log.warning "Add your public key to ssh_authorized_keys in the add-on config"
+        return 0
+    fi
+    bashio::log.info "SSH authorized keys written: ${key_count} key(s)"
+
+    cat > /etc/ssh/sshd_config <<EOF
+Port ${ssh_port}
+HostKey ${host_key_dir}/ssh_host_rsa_key
+HostKey ${host_key_dir}/ssh_host_ed25519_key
+AuthorizedKeysFile ${auth_keys_file}
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+PermitRootLogin prohibit-password
+X11Forwarding no
+MaxAuthTries 3
+LoginGraceTime 30
+PrintMotd no
+EOF
+
+    /usr/sbin/sshd || { bashio::log.error "Failed to start sshd"; return 1; }
+    bashio::log.info "SSH server started on port ${ssh_port}"
+}
+
 # Setup ha-mcp (Home Assistant MCP Server) for Claude Code integration
 setup_ha_mcp() {
     if [ -f "/opt/scripts/setup-ha-mcp.sh" ]; then
@@ -376,6 +489,7 @@ main() {
     update_claude
     install_persistent_packages
     generate_ha_context
+    setup_ssh
     setup_ha_mcp
     start_web_terminal
 }
