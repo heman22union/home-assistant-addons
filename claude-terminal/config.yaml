@@ -1,8 +1,8 @@
 ---
-name: "Claude Terminal"
+name: "Claude Terminal (Upstream)"
 description: "Web terminal with Anthropic's Claude Code CLI and persistent auth"
 version: "2.5.1"
-slug: "claude_terminal"
+slug: "claude_terminal_upstream"
 init: false
 
 # Prebuilt images on GHCR — the Supervisor pulls these instead of building
