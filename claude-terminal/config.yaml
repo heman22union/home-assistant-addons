@@ -39,7 +39,7 @@ options:
   enable_ha_mcp: true
   ha_mcp_version: "7.11.0"
   enable_session_picker: false
-  working_directory: "/config"
+  working_directory: "/config/ha_ai_repo"
   prompt_working_directory: false
   claude_data_path: ""
   enable_ssh: false
