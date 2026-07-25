@@ -5,10 +5,6 @@ version: "2.5.2"
 slug: "claude_terminal"
 init: false
 
-# Prebuilt images on GHCR — the Supervisor pulls these instead of building
-# locally (no build OOM, no image blobs in backups). Tag = version below.
-image: "ghcr.io/heytcass/{arch}-addon-claude-terminal"
-
 # Supported architectures (armv7 dropped in 2.5.0: HAOS dropped 32-bit ARM,
 # and neither Claude Code native builds nor managed Python exist for it)
 arch:
@@ -16,7 +12,7 @@ arch:
   - amd64
 
 # External resources
-url: "https://github.com/heytcass/home-assistant-addons"
+url: "https://github.com/heman22union/home-assistant-addons"
 
 # Web interface configuration
 ingress: true
@@ -75,7 +71,7 @@ schema:
 # Volume mappings for file access
 map:
   - config:rw            # Home Assistant configuration files
-  - all_addon_configs:rw # Other add-ons' config directories (/addon_configs)
+  - all_app_configs:rw  # Other add-ons' config directories (/addon_configs)
   - share:rw             # Shared folder between add-ons and HA
 
 # API access for Home Assistant integration
