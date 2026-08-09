@@ -119,6 +119,7 @@ setup_commands() {
         "ha-context:/opt/scripts/ha-context.sh" \
         "claude-doctor:/opt/scripts/health-check.sh" \
         "claude-login-url:/opt/scripts/claude-login-url.sh" \
+        "login-url-watcher:/opt/scripts/login-url-watcher.sh" \
         "claude-session-picker:/opt/scripts/claude-session-picker.sh" \
         "pick-working-dir:/opt/scripts/pick-working-dir.sh"; do
         name="${entry%%:*}"
@@ -291,6 +292,17 @@ generate_ha_context() {
     if [ -f /usr/local/bin/ha-context ]; then
         bashio::log.info "Generating Home Assistant context in background"
         (/usr/local/bin/ha-context >/dev/null 2>&1 || true) &
+    fi
+}
+
+# Deliver Claude Code's OAuth login URL as a clickable HA notification the
+# moment it appears, so login works with no manual steps (SSH, File Editor,
+# clipboard) needed — see login-url-watcher.sh for why the clipboard path
+# can't be relied on.
+start_login_url_watcher() {
+    if [ -f /usr/local/bin/login-url-watcher ]; then
+        bashio::log.info "Starting login URL watcher in background"
+        (/usr/local/bin/login-url-watcher >/dev/null 2>&1 || true) &
     fi
 }
 
@@ -489,6 +501,7 @@ main() {
     update_claude
     install_persistent_packages
     generate_ha_context
+    start_login_url_watcher
     setup_ssh
     setup_ha_mcp
     start_web_terminal
